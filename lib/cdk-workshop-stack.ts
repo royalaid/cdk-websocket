@@ -2,6 +2,7 @@ import * as sns from '@aws-cdk/aws-sns';
 import * as subs from '@aws-cdk/aws-sns-subscriptions';
 import * as sqs from '@aws-cdk/aws-sqs';
 import * as cdk from '@aws-cdk/core';
+import {WebsocketConstruct} from "./websocket";
 
 export class CdkWorkshopStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
@@ -14,5 +15,11 @@ export class CdkWorkshopStack extends cdk.Stack {
     const topic = new sns.Topic(this, 'CdkWorkshopTopic');
 
     topic.addSubscription(new subs.SqsSubscription(queue));
+    new WebsocketConstruct(this, 'websockets', {
+      prefix: 'tmpPrefix',
+      account_id: this.account,
+      region: this.region,
+    })
+
   }
 }

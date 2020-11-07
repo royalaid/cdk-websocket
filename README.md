@@ -1,9 +1,10 @@
-# Welcome to your CDK TypeScript project!
-
-You should explore the contents of this project. It demonstrates a CDK app with an instance of a stack (`CdkWorkshopStack`)
-which contains an Amazon SQS queue that is subscribed to an Amazon SNS topic.
-
-The `cdk.json` file tells the CDK Toolkit how to execute your app.
+#What is this?
+This is a basic project that glues together websockets via
+API Gateway and CDK since at the time of creation no constructs
+exist inside CDK itself. It probably doesn't follow best practices
+but rather is an exploration by myself. You probably want to double check 
+what is going on inside most of this project if you are going to incorporate
+into something larger!
 
 ## Useful commands
 

@@ -1,6 +1,7 @@
 {
-  "name": "cdk-workshop",
-  "version": "0.1.0",
+  "name": "cdk-websocket",
+  "version": "1.0.0",
+  "license": "EPL-1.0",
   "bin": {
     "cdk-workshop": "bin/cdk-workshop.js"
   },
@@ -21,9 +22,27 @@
     "typescript": "~3.9.7"
   },
   "dependencies": {
+    "@aws-cdk/aws-apigateway": "^1.72.0",
+    "@aws-cdk/aws-apigatewayv2": "^1.72.0",
+    "@aws-cdk/aws-dynamodb": "^1.72.0",
+    "@aws-cdk/aws-lambda-nodejs": "^1.72.0",
     "@aws-cdk/aws-sns": "1.72.0",
     "@aws-cdk/aws-sns-subscriptions": "1.72.0",
     "@aws-cdk/aws-sqs": "1.72.0",
-    "@aws-cdk/core": "1.72.0"
+    "@aws-cdk/core": "1.72.0",
+    "aws-sdk": "^2.787.0"
+  },
+  "targets": {
+    "cdk-lambda": {
+      "context": "node",
+      "includeNodeModules": {
+        "aws-sdk": false
+      },
+      "sourceMap": false,
+      "minify": false,
+      "engines": {
+        "node": ">= 12"
+      }
+    }
   }
 }
