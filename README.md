@@ -1,4 +1,4 @@
-#What is this?
+# What is this?
 This is a basic project that glues together websockets via
 API Gateway and CDK since at the time of creation no constructs
 exist inside CDK itself. It probably doesn't follow best practices
