@@ -1,13 +1,17 @@
 import * as cdk from '@aws-cdk/core'
 import * as dynamodb from '@aws-cdk/aws-dynamodb'
+import {Table} from '@aws-cdk/aws-dynamodb'
 import * as apigatewayv2 from '@aws-cdk/aws-apigatewayv2'
+import {CfnApi, CfnAuthorizer} from '@aws-cdk/aws-apigatewayv2'
+import * as cognito from "@aws-cdk/aws-cognito"
 import * as nodejs from '@aws-cdk/aws-lambda-nodejs'
+import {NodejsFunction} from '@aws-cdk/aws-lambda-nodejs'
 import * as lambda from '@aws-cdk/aws-lambda'
 import * as logs from '@aws-cdk/aws-logs'
 import * as iam from '@aws-cdk/aws-iam'
+import {PolicyStatement} from '@aws-cdk/aws-iam'
 import {Role} from '@aws-cdk/aws-iam'
-import {CfnApi} from "@aws-cdk/aws-apigatewayv2";
-import {NodejsFunction} from "@aws-cdk/aws-lambda-nodejs";
+import {AuthorizationType} from "@aws-cdk/aws-apigateway";
 
 export interface Props {
     prefix: string
@@ -22,6 +26,7 @@ export interface Props {
  */
 export class WebsocketConstruct extends cdk.Construct {
     private websocket_api: CfnApi;
+    private authorizer: CfnAuthorizer;
     constructor(parent: cdk.Construct, id: string, props: Props) {
         super(parent, id)
 
@@ -44,6 +49,19 @@ export class WebsocketConstruct extends cdk.Construct {
             routeSelectionExpression: '$request.body.action',
         })
 
+        let userPool = new cognito.UserPool(this, 'myuserpool', {
+            userPoolName: 'myawesomeapp-userpool',
+        });
+
+        const authFn = new nodejs.NodejsFunction(this, 'authorizer-lambda', {
+            handler: 'handler',
+            functionName: props?.prefix + 'authorizer-message',
+            timeout: cdk.Duration.seconds(300),
+            entry: './endpoints/authorizer/index.js',
+            runtime: lambda.Runtime.NODEJS_12_X,
+            logRetention: logs.RetentionDays.FIVE_DAYS,
+        })
+
         // initialize lambda and permissions
         const lambda_policy = new iam.PolicyStatement({
             actions: [
@@ -61,68 +79,23 @@ export class WebsocketConstruct extends cdk.Construct {
             resources: [websocket_table.tableArn],
         })
 
-        const connect_lambda_role = new iam.Role(this, 'connect-lambda-role', {
-            assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
-        })
-        connect_lambda_role.addToPolicy(lambda_policy)
-        connect_lambda_role.addManagedPolicy(
-            iam.ManagedPolicy.fromAwsManagedPolicyName(
-                'service-role/AWSLambdaBasicExecutionRole'
-            )
-        )
+        authFn.addToRolePolicy(lambda_policy)
 
-        const disconnect_lambda_role = new iam.Role(
-            this,
-            'disconnect-lambda-role',
-            { assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com') }
-        )
-        disconnect_lambda_role.addToPolicy(lambda_policy)
-        disconnect_lambda_role.addManagedPolicy(
-            iam.ManagedPolicy.fromAwsManagedPolicyName(
-                'service-role/AWSLambdaBasicExecutionRole'
-            )
-        )
+        const connect_lambda = this.makeLambda('connect', './endpoints/onconnect/index.js',
+            lambda_policy, props, websocket_table);
+        const disconnect_lambda = this.makeLambda('disconnect', './endpoints/ondisconnect/index.js',
+            lambda_policy, props, websocket_table);
 
         const message_lambda_role = new iam.Role(this, 'message-lambda-role', {
             assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
         })
+
         message_lambda_role.addToPolicy(lambda_policy)
+
         message_lambda_role.addManagedPolicy(
             iam.ManagedPolicy.fromAwsManagedPolicyName(
                 'service-role/AWSLambdaBasicExecutionRole'
             )
-        )
-
-        const connect_lambda = new nodejs.NodejsFunction(this, 'connect_lambda', {
-            handler: 'handler',
-            functionName: props?.prefix + 'connect',
-            description: 'Connect a user.',
-            timeout: cdk.Duration.seconds(300),
-            entry: './endpoints/onconnect/index.js',
-            runtime: lambda.Runtime.NODEJS_12_X,
-            logRetention: logs.RetentionDays.FIVE_DAYS,
-            role: connect_lambda_role,
-            environment: {
-                TABLE_NAME: websocket_table.tableName,
-            },
-        })
-
-        const disconnect_lambda = new nodejs.NodejsFunction(
-            this,
-            'disconnect_lambda',
-            {
-                handler: 'handler',
-                functionName: props?.prefix + 'disconnect',
-                description: 'Disconnect a user.',
-                timeout: cdk.Duration.seconds(300),
-                entry: './endpoints/ondisconnect/index.js',
-                runtime: lambda.Runtime.NODEJS_12_X,
-                logRetention: logs.RetentionDays.FIVE_DAYS,
-                role: disconnect_lambda_role,
-                environment: {
-                    TABLE_NAME: websocket_table.tableName,
-                },
-            }
         )
 
         const message_lambda = new nodejs.NodejsFunction(this, 'message-lambda', {
@@ -159,6 +132,7 @@ export class WebsocketConstruct extends cdk.Construct {
                 connect_lambda.functionArn,
                 disconnect_lambda.functionArn,
                 message_lambda.functionArn,
+                authFn.functionArn
             ],
             actions: ['lambda:InvokeFunction'],
         })
@@ -168,11 +142,20 @@ export class WebsocketConstruct extends cdk.Construct {
         })
         role.addToPolicy(policy)
 
+        this.authorizer = new apigatewayv2.CfnAuthorizer(this, 'main-auth', {
+            apiId: this.websocket_api.ref,
+            authorizerType: "REQUEST",
+            authorizerUri: `arn:aws:apigateway:${cdk.Aws.REGION}:lambda:path/2015-03-31/functions/${authFn.functionArn}/invocations`,
+            identitySource: ["route.request.header.Auth"],
+            name: 'main-auth',
+            authorizerCredentialsArn: role.roleArn
+        })
+
         // Finishing touches on the API definition
         const deployment = new apigatewayv2.CfnDeployment(
             this,
             `${name}-deployment`,
-            { apiId: this.websocket_api.ref }
+            { apiId: this.websocket_api.ref,}
         )
 
         new apigatewayv2.CfnStage(this, `${name}-stage`, {
@@ -180,11 +163,12 @@ export class WebsocketConstruct extends cdk.Construct {
             autoDeploy: true,
             deploymentId: deployment.ref,
             stageName: 'dev',
+
         })
 
         const dependencies = new cdk.ConcreteDependable()
 
-        const connect_route = this.makeRoute(props, connect_lambda, role, 'connect', '$connect');
+        const connect_route = this.makeRoute(props, connect_lambda, role, 'connect', '$connect', true);
         const disconnect_route = this.makeRoute(props, disconnect_lambda, role, 'disconnect', '$disconnect');
         const message_route = this.makeRoute(props, message_lambda, role, 'sendMessage', 'sendmessage');
 
@@ -194,8 +178,28 @@ export class WebsocketConstruct extends cdk.Construct {
         deployment.node.addDependency(dependencies)
     }
 
+    private makeLambda(lambdaName: String, codePath:string, lambda_policy: PolicyStatement, props: Props, websocket_table: Table, handler: string = 'handler') {
+        let nodejsFunction = new nodejs.NodejsFunction(
+            this,
+            `${lambdaName}_lambda`,
+            {
+                handler: handler,
+                functionName: props?.prefix + lambdaName,
+                timeout: cdk.Duration.seconds(300),
+                entry: codePath,
+                runtime: lambda.Runtime.NODEJS_12_X,
+                logRetention: logs.RetentionDays.FIVE_DAYS,
+                environment: {
+                    TABLE_NAME: websocket_table.tableName,
+                },
+            }
+        );
+        nodejsFunction.addToRolePolicy(lambda_policy);
+        return nodejsFunction;
+    }
+
     private makeRoute(props: Props, lambda: NodejsFunction, role: Role,
-                      id: string, routeKey: string) {
+                      id: string, routeKey: string, authorize: boolean = false) {
         // websocket api lambda integration
         const connect_integration = new apigatewayv2.CfnIntegration(
             this,
@@ -208,16 +212,23 @@ export class WebsocketConstruct extends cdk.Construct {
                     lambda.functionArn
                 ),
                 credentialsArn: role.roleArn,
+
             }
         )
 
         // Example route definition
-        return new apigatewayv2.CfnRoute(this, `${id}-route`, {
+        let fullProps = {
             apiId: this.websocket_api.ref,
             routeKey: routeKey,
-            authorizationType: 'NONE',
             target: 'integrations/' + connect_integration.ref,
-        });
+        };
+        if(authorize){
+            Object.assign(fullProps, {
+                authorizationType: AuthorizationType.CUSTOM,
+                authorizerId: this.authorizer.ref
+            })
+        }
+        return new apigatewayv2.CfnRoute(this, `${id}-route`, fullProps);
     }
 
     private create_integration_str = (region: string, fn_arn: string): string =>
